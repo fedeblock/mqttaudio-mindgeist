@@ -1,27 +1,23 @@
-#ifndef SAMPLE_H
-#define SAMPLE_H
+#ifndef SAMPLEMANAGER_H
+#define SAMPLEMANAGER_H
 
 #include <string>
+#include <unordered_map>
+
+#include "sample.h"
+
 using namespace std;
 
-#include "SDL.h"
-#include "SDL_mixer.h"
-
-#define HTTP_PROTOCOL_PREFIX "http"
-
-class Sample
-{
+class SampleManager {
 public:
-    std::string sourceUri;
-    Sample(const char *uri);
-
-    bool isValid();
-    Mix_Chunk *chunk = NULL;
-
-    void Free();
-
+    SampleManager(bool verbose) : verbose(verbose) {}
+    Sample* GetSample(const char* uri);
+    void FreeAll();
+    void RemoveSample(const std::string& filename);
 private:
-    void initSample();
+    std::unordered_map<std::string, Sample*> _database;
+    bool verbose;  
 };
+
 
 #endif
