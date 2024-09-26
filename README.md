@@ -1,139 +1,232 @@
-# **MQTT Audio Player Mindgeist**
+# MQTT Audio Player
 
-## **Descripción**
-`mqttaudio` es un reproductor de audio controlado mediante mensajes MQTT, diseñado para reproducir sonidos, ajustar el volumen, pausar, y reanudar la reproducción de audio mediante comandos MQTT. Está basado en SDL2 y `mosquitto` para el control de audio y la comunicación MQTT, respectivamente.
+A lightweight yet feature-rich MQTT-controlled audio player using SDL2 and SDL2_mixer libraries. Based on bandrews/mqttaudio, this player listens to MQTT messages and plays audio files accordingly, supporting various audio formats like OGG, MOD, MP3, and WAV. Despite its lightweight design, it offers extensive functionality, allowing control over individual channels, volume settings, looping, and more.
 
-Este proyecto es ideal para aplicaciones de automatización y domótica, donde los eventos o comandos se transmiten a través de un servidor MQTT y requieren la reproducción o manipulación de audio en respuesta a dichos comandos.
+## Features
 
-## **Características**
+- **MQTT Integration**: Listens to specified MQTT topics and processes commands to control audio playback.
+- **Multiple Audio Formats**: Supports OGG, MOD, MP3, and WAV formats.
+- **Channel Management**: Play sounds on specific channels, pause, resume, and stop playback.
+- **Volume Control**:
+  - **Master Volume**: Control the overall volume affecting all channels proportionally.
+  - **Channel Volume**: Set individual volumes for each channel.
+- **Looping and Exclusive Playback**: Supports looping sounds and exclusive playback that stops all other sounds.
+- **Sample Caching**: Preload and cache audio samples for faster playback.
+- **No-Cache Playback**: Option to play audio without caching, reloading the file each time.
+- **Command Processing**: Handles various commands like play, stop, fade out, set volume, etc.
+- **Verbose Logging**: Optional verbose mode for detailed logging.
 
-- **Reproducción de audio**: Permite reproducir archivos de audio desde diferentes fuentes.
-- **Control de volumen**: Ajuste de volumen por canal.
-- **Comandos de pausa y reanudación**: Puede pausar y reanudar la reproducción en canales específicos.
-- **Pre-carga de muestras de audio**: Soporta la precarga de muestras para una reproducción rápida.
-- **Fade Out**: Soporta desvanecimiento gradual del audio.
-- **Control de exclusividad**: Detiene automáticamente otros sonidos cuando se reproduce un audio exclusivo.
+## Requirements
 
-## **Requisitos**
+- **C++ Compiler**: Compatible with GCC.
+- **SDL2**: Simple DirectMedia Layer library.
+- **SDL2_mixer**: SDL audio mixer library.
+- **libmosquitto**: MQTT client library.
+- **RapidJSON**: Fast JSON parser and generator for C++.
+- **ALSA**: Advanced Linux Sound Architecture for audio device handling.
+- **CURL**: Used for HTTP support in SDL.
 
-Para compilar y ejecutar `mqttaudio`, asegúrate de tener instalados los siguientes paquetes:
+## Installation
 
-- **SDL2**: Para la reproducción de audio.
-- **SDL2_mixer**: Para manejar diferentes formatos de audio.
-- **mosquitto**: Para las comunicaciones MQTT.
-- **rapidjson**: Para el procesamiento de mensajes JSON.
-- **ALSA**: Para la reproducción de audio en Linux.
+1. **Install Dependencies**:
 
-### **Instalación de dependencias en Linux**
+   Make sure you have the following libraries installed:
+
+   - SDL2
+   - SDL2_mixer
+   - libmosquitto
+   - RapidJSON
+   - ALSA
+   - CURL
+
+   On Debian-based systems, you can install them using:
+
+   ```bash
+   sudo apt-get install libsdl2-dev libsdl2-mixer-dev libmosquitto-dev rapidjson-dev libasound2-dev libcurl4-openssl-dev
+   ```
+
+2. **Clone the Repository**:
+
+   ```bash
+   git clone https://github.com/yourusername/mqtt-audio-player.git
+   cd mqtt-audio-player
+   ```
+
+3. **Compile the Source Code**:
+
+   Use the provided `Makefile` to compile the program:
+
+   ```bash
+   make mqttaudio
+   ```
+
+   This will generate the executable `mqttaudio`.
+
+## Usage
 
 ```bash
-sudo apt-get install libsdl2-dev libsdl2-mixer-dev libmosquitto-dev libasound2-dev rapidjson-dev libcurl4-openssl-dev
+./mqttaudio [options]
 ```
 
-## **Compilación**
+### Command-Line Options
 
-Para compilar el proyecto, usa el comando `make` en el directorio raíz del proyecto:
+- `-s, --server`: The MQTT server to connect to (default `localhost`).
+- `-p, --port`: The MQTT server port (default `1883`).
+- `-t, --topic`: The MQTT topic to subscribe to (wildcards allowed).
+- `-d, --alsa-device`: The ALSA PCM device to use (overrides `SDL_AUDIODRIVER` and `AUDIODEV` environment variables).
+- `-l, --list-devices`: Lists available ALSA PCM devices for the `-d` option.
+- `-v, --verbose`: Enables verbose logging.
+- `-f, --frequency`: Sets the frequency for the sound output (in Hz).
+- `-u, --uri-prefix`: Sets a prefix to be prepended to all sound file locations.
+- `--preload`: Preloads a sound sample on startup.
 
-```bash
-make mqttaudio
-```
+### Examples
 
-Esto generará el binario `mqttaudio`.
+- **Start the player with default settings and verbose mode**:
 
-## **Ejecución**
+  ```bash
+  ./mqttaudio -v -t "audio/commands"
+  ```
 
-Ejecuta el programa proporcionando los parámetros necesarios, como el servidor MQTT, el puerto y el tema de suscripción:
+- **Connect to a specific MQTT server and topic**:
 
-```bash
-./mqttaudio -s localhost -p 1883 -t "audio/command"
-```
+  ```bash
+  ./mqttaudio -s mqtt.example.com -p 1883 -t "home/audio"
+  ```
 
-Los comandos MQTT se envían a través del tema especificado (por ejemplo, `audio/command`), y el programa responderá a dichos comandos.
+- **Set a custom ALSA PCM device**:
 
-## **Comandos MQTT Disponibles**
+  ```bash
+  ./mqttaudio -d "hw:0,0" -t "audio/commands"
+  ```
 
-### 1. **soundPlay**
-Reproduce un archivo de audio en un canal específico, con opciones para repetir, ajustar el volumen, establecer exclusividad y reproducir como música de fondo.
+- **List available ALSA PCM devices**:
 
-#### **Parámetros:**
-- `file`: Ruta al archivo de audio que se reproducirá.
-- `channel`: Canal donde se reproducirá el audio. Los canales son virtuales y manejados por SDL_mixer.
-- `volume`: Nivel de volumen (0.0 a 1.0).
-- `loop`: Indica si el audio debe repetirse (`true`) o no (`false`).
-- `exclusive`: Si se establece en `true`, detendrá otros sonidos antes de reproducir este.
-- `bgm`: Si es `true`, se reproducirá como música de fondo.
-- `maxPlayLength`: Tiempo máximo de reproducción (en milisegundos). Si es `-1`, reproduce indefinidamente.
+  ```bash
+  ./mqttaudio -l
+  ```
 
-#### **Ejemplo de mensaje MQTT**:
+## MQTT Commands
+
+The player listens to MQTT messages in JSON format and processes commands accordingly.
+
+### Command Structure
 
 ```json
 {
-  "command": "soundPlay",
+  "command": "commandName",
   "message": {
-    "file": "path/to/audio/file.mp3",
+    // parameters
+  }
+}
+```
+
+### Supported Commands
+
+#### Play Sound
+
+**Command**: `play` or `soundPlay`
+
+**Description**: Plays an audio file with specified parameters.
+
+**Parameters**:
+
+- `file` (string, required): Path or URL to the audio file.
+- `channel` (int, optional): Channel number to play the sound on (default `0`).
+- `loop` (bool, optional): Whether to loop the sound (default `false`).
+- `volume` (float, optional): Volume level (0.0 to 1.0, default `1.0`).
+- `exclusive` (bool, optional): If `true`, stops all other sounds before playing (default `false`).
+- `bgm` (bool, optional): Background music flag (not currently used).
+- `maxPlayLength` (int, optional): Maximum play length in milliseconds (default `-1`, play to the end).
+- `nocache` (bool, optional): If `true`, does not cache the sample (default `false`).
+
+**Example**:
+
+```json
+{
+  "command": "play",
+  "message": {
+    "file": "/path/to/sound.mp3",
     "channel": 1,
-    "volume": 0.8,
     "loop": false,
-    "exclusive": true,
-    "bgm": false,
-    "maxPlayLength": 10000
+    "volume": 0.8,
+    "exclusive": false,
+    "maxPlayLength": 60000,
+    "nocache": true
   }
 }
 ```
 
-### 2. **soundStopAll**
-Detiene todos los sonidos que se están reproduciendo actualmente, incluida la música de fondo.
+#### Stop All Sounds
 
-#### **Ejemplo de mensaje MQTT**:
+**Command**: `stopall` or `soundStopAll`
+
+**Description**: Stops all currently playing sounds.
+
+**Example**:
 
 ```json
 {
-  "command": "soundStopAll"
+  "command": "stopall"
 }
 ```
 
-### 3. **soundFadeOut**
-Realiza un fade out (desvanecimiento gradual) en todos los canales activos en un tiempo especificado.
+#### Fade Out Sound
 
-#### **Parámetros:**
-- `time`: Tiempo de desvanecimiento en milisegundos.
+**Command**: `fadeout` or `soundFadeOut`
 
-#### **Ejemplo de mensaje MQTT**:
+**Description**: Fades out the sound on a specific channel or all channels over a specified time.
+
+**Parameters**:
+
+- `time` (int, required): Fade out time in milliseconds.
+- `channel` (int, optional): Channel to fade out (default `-1` for all channels).
+
+**Example**:
 
 ```json
 {
-  "command": "soundFadeOut",
+  "command": "fadeout",
   "message": {
-    "time": 5000
+    "time": 5000,
+    "channel": -1
   }
 }
 ```
 
-### 4. **soundPrecache**
-Pre-carga un archivo de audio para una reproducción más rápida en el futuro.
+#### Preload Sample
 
-#### **Parámetros:**
-- `file`: Ruta del archivo de audio a pre-cargar.
+**Command**: `precache` or `soundPrecache`
 
-#### **Ejemplo de mensaje MQTT**:
+**Description**: Preloads an audio sample into the cache.
+
+**Parameters**:
+
+- `file` (string, required): Path or URL to the audio file.
+
+**Example**:
 
 ```json
 {
-  "command": "soundPrecache",
+  "command": "precache",
   "message": {
-    "file": "path/to/audio/file.mp3"
+    "file": "/path/to/sound.mp3"
   }
 }
 ```
 
-### 5. **soundSetVolume**
-Ajusta el volumen de un canal específico.
+#### Set Channel Volume
 
-#### **Parámetros:**
-- `channel`: Canal cuyo volumen se desea ajustar.
-- `volume`: Volumen entre 0.0 y 1.0.
+**Command**: `soundSetVolume`
 
-#### **Ejemplo de mensaje MQTT**:
+**Description**: Sets the volume for a specific channel.
+
+**Parameters**:
+
+- `channel` (int, required): Channel number.
+- `volume` (float, required): Volume level (0.0 to 1.0).
+
+**Example**:
 
 ```json
 {
@@ -145,13 +238,17 @@ Ajusta el volumen de un canal específico.
 }
 ```
 
-### 6. **soundPause**
-Pausa la reproducción de audio en un canal específico.
+#### Pause Channel
 
-#### **Parámetros:**
-- `channel`: El canal que se desea pausar.
+**Command**: `soundPause`
 
-#### **Ejemplo de mensaje MQTT**:
+**Description**: Pauses playback on a specific channel.
+
+**Parameters**:
+
+- `channel` (int, required): Channel number.
+
+**Example**:
 
 ```json
 {
@@ -162,13 +259,17 @@ Pausa la reproducción de audio en un canal específico.
 }
 ```
 
-### 7. **soundResume**
-Reanuda la reproducción de audio en un canal previamente pausado.
+#### Resume Channel
 
-#### **Parámetros:**
-- `channel`: El canal que se desea reanudar.
+**Command**: `soundResume`
 
-#### **Ejemplo de mensaje MQTT**:
+**Description**: Resumes playback on a specific channel.
+
+**Parameters**:
+
+- `channel` (int, required): Channel number.
+
+**Example**:
 
 ```json
 {
@@ -179,46 +280,62 @@ Reanuda la reproducción de audio en un canal previamente pausado.
 }
 ```
 
-## **Escenario de uso**
+#### Set Master Volume
 
-En un escenario en el que `mqttaudio` está reproduciendo un cuento de fondo y se detecta una palabra clave (wakeword), puedes:
+**Command**: `setMasterVolume`
 
-1. **Bajar el volumen del canal del cuento** cuando se detecta la palabra clave para dar prioridad al audio de notificación.
+**Description**: Sets the master volume, affecting all channels proportionally.
+
+**Parameters**:
+
+- `volume` (float, required): Master volume level (0.0 to 1.0).
+
+**Example**:
 
 ```json
 {
-  "command": "soundSetVolume",
+  "command": "setMasterVolume",
   "message": {
-    "channel": 1,
-    "volume": 0.2
+    "volume": 0.7
   }
 }
 ```
 
-2. **Reproducir una alerta** en otro canal para indicar que se ha detectado la palabra clave.
+## How It Works
 
-```json
-{
-  "command": "soundPlay",
-  "message": {
-    "file": "path/to/wakeword_alert.mp3",
-    "channel": 2,
-    "volume": 1.0,
-    "loop": false
-  }
-}
-```
+- The player initializes SDL and SDL_mixer for audio playback.
+- Connects to the specified MQTT server and subscribes to the given topic.
+- Listens for MQTT messages and parses them using RapidJSON.
+- Processes commands to control audio playback, volume, and other functionalities.
+- Manages audio samples using `SampleManager`, supporting caching and preloading.
 
-3. **Volver a subir el volumen del cuento** una vez que la alerta ha sido procesada.
+## Customization
 
-```json
-{
-  "command": "soundSetVolume",
-  "message": {
-    "channel": 1,
-    "volume": 0.8
-  }
-}
-```
+- **URI Prefix**: Use the `-u` or `--uri-prefix` option to set a prefix for all audio file paths. This is useful if all your audio files are in a specific directory or URL.
+- **Preloading Samples**: Use the `--preload` option to preload samples on startup, reducing latency when playing them later.
 
-Este escenario demuestra cómo puedes controlar múltiples sonidos y efectos de audio simultáneamente en diferentes canales y manejar eventos prioritarios como el reconocimiento de palabras clave.
+## Verbose Logging
+
+Enable verbose logging with the `-v` or `--verbose` option to get detailed output of the player's operations, including:
+
+- Commands received and their parameters.
+- Volume levels and calculations.
+- Cache operations (loading, removing samples).
+- Playback actions (playing, stopping, pausing, resuming).
+
+## Error Handling
+
+- The player outputs error messages if it encounters issues with commands, such as missing parameters or invalid formats.
+- SDL and SDL_mixer error messages are displayed if audio initialization or playback fails.
+
+## License
+
+This project is licensed under the MIT License.
+
+## Contributing
+
+Contributions are welcome! Please submit pull requests or open issues to suggest improvements or report bugs.
+
+## Contact
+
+For questions or support, please contact [contact@mindgeist.com](mailto:contact@mindgeist.com).
