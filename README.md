@@ -1,4 +1,4 @@
-# **MQTT Audio Player bis**
+# **MQTT Audio Player Mindgeist**
 
 ## **Descripción**
 `mqttaudio` es un reproductor de audio controlado mediante mensajes MQTT, diseñado para reproducir sonidos, ajustar el volumen, pausar, y reanudar la reproducción de audio mediante comandos MQTT. Está basado en SDL2 y `mosquitto` para el control de audio y la comunicación MQTT, respectivamente.
