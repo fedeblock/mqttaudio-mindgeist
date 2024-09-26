@@ -22,6 +22,22 @@ Sample* SampleManager::GetSample(const char * uri)
     }
 }
 
+void SampleManager::RemoveSample(const std::string& filename)
+{
+    auto it = _database.find(filename);
+    if (it != _database.end())
+    {
+        delete it->second;  // Libera la memoria asociada con el sample
+        _database.erase(it);  // Elimina la entrada del caché
+        if (verbose)
+        {
+            printf("Sample '%s' removed from cache.\n", filename.c_str());
+        }
+    }
+}
+
+
+
 void SampleManager::FreeAll()
 {
     for( const auto& s : _database ) {

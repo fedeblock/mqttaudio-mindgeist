@@ -29,10 +29,19 @@
 using namespace std;
 using namespace rapidjson;
 
-const char *argp_program_version = "0.1.1";
-const char *argp_program_bug_address = "contact@mofangheavyindustries.com";
+
+// Prototipos de funciones
+void setChannelVolume(int channel, float volume);
+void pauseChannel(int channel);
+void resumeChannel(int channel);
+bool processCommand(Document &d);
+
+
+const char *argp_program_version = "0.1.2";
+const char *argp_program_bug_address = "contact@mindgeist.com";
 
 int frequency = 44100;
+float masterVolume = 1.0f; // Volumen master por defecto (100%)
 
 std::string server = "localhost";
 unsigned int port = 1883;
@@ -45,7 +54,7 @@ vector<string> preloads;
 bool run = true;
 bool verbose = false;
 
-SampleManager manager;
+SampleManager manager(verbose);  // Se pasa verbose al constructor
 
 void handle_signal(int s)
 {
@@ -100,7 +109,8 @@ Sample *precacheSample(const char *file)
     return manager.GetSample(filename.c_str());
 }
 
-void playSample(const char *file, bool loop, float volume, bool exclusive, bool isBgm, int maxPlayLength)
+
+void playSample(const char *file, int channel, bool loop, float volume, bool exclusive, bool isBgm, int maxPlayLength, bool nocache)
 {
     if (volume < 0.0f)
     {
@@ -111,32 +121,52 @@ void playSample(const char *file, bool loop, float volume, bool exclusive, bool 
         volume = 1.0f;
     }
 
+    // Aplica el volumen master
+    float effectiveVolume = volume * masterVolume;
+    if (effectiveVolume < 0.0f)
+    {
+        effectiveVolume = 0.0f;
+    }
+    if (effectiveVolume > 1.0f)
+    {
+        effectiveVolume = 1.0f;
+    }
+
+    int sdlVolume = (int)(effectiveVolume * MIX_MAX_VOLUME);
+
     if (verbose)
     {
-        printf("Playing sound %s, %s %s, at volume %d%%%s\n", file, loop ? "looping" : "once", maxPlayLength == -1 ? "forever" : "for a limited time", (int)(volume * 100.0f), isBgm ? "as background music." : ".");
-        if (maxPlayLength != -1)
+        printf("Playing sound %s, on channel %d, %s, at volume %d%%\n", file, channel, loop ? "looping" : "once", (int)(effectiveVolume * 100));
+    }
+
+    // Si 'nocache' está activado, elimina el archivo del caché antes de precargarlo
+    if (nocache)
+    {
+        manager.RemoveSample(file);  // Elimina el archivo del caché
+        if (verbose)
         {
-            printf("\tMax play length is %d ms.\n", maxPlayLength);
+            printf("Removed sample '%s' from cache due to nocache=true.\n", file);
         }
     }
 
     if (exclusive)
     {
-        stopAll(isBgm);
+        Mix_HaltChannel(-1); // Detiene todos los canales si es exclusivo
     }
 
-    Sample *sample = precacheSample(file);
+    // Precarga el sample después de eliminarlo del caché, si nocache es true
+    Sample *sample = precacheSample(file); 
     if (sample != NULL)
     {
-        int channel = Mix_PlayChannelTimed(-1, sample->chunk, loop ? -1 : 0, maxPlayLength);
-        int mixVolume = (int)(((float)MIX_MAX_VOLUME) * volume);
-        Mix_Volume(channel, mixVolume);
+        Mix_Volume(channel, sdlVolume);                                             // Ajusta el volumen antes de reproducir
+        Mix_PlayChannelTimed(channel, sample->chunk, loop ? -1 : 0, maxPlayLength); // Reproduce en el canal seleccionado
     }
     else
     {
         printf("Error - could not load requested sample '%s'\n", file);
     }
 }
+
 
 bool processCommand(Document &d)
 {
@@ -155,7 +185,7 @@ bool processCommand(Document &d)
     const char *command = d["command"].GetString();
     if (0 == strcasecmp(command, "soundPlay") || 0 == strcasecmp(command, "play"))
     {
-        // Check to make sure we have a valid message first.
+        // Verifica que el mensaje tenga todos los parámetros necesarios
         if (!d.HasMember("message") || !d["message"].IsObject())
         {
             fprintf(stderr, "Message does not have a 'message' property that is an object.\n");
@@ -164,19 +194,25 @@ bool processCommand(Document &d)
 
         if (!d["message"].HasMember("file") || !d["message"]["file"].IsString())
         {
-            fprintf(stderr, "Message does does not have a 'message.file' property that is a string.\n");
+            fprintf(stderr, "Message does not have a 'file' property that is a string.\n");
             return false;
         }
 
-        // Now, set up defaults...
         const char *file = d["message"]["file"].GetString();
+        int channel = 0; // Valor por defecto
         bool loop = false;
         float volume = 1.0f;
         bool exclusive = false;
         bool bgm = false;
+        bool nocache = false; // Valor por defecto para nocache
         int maxPlayLength = -1;
 
-        // And then update settings based on elements of the message.
+        // Ajusta los parámetros según el mensaje
+        if (d["message"].HasMember("channel") && d["message"]["channel"].IsInt())
+        {
+            channel = d["message"]["channel"].GetInt();
+        }
+
         if (d["message"].HasMember("loop") && d["message"]["loop"].IsBool())
         {
             loop = d["message"]["loop"].GetBool();
@@ -202,9 +238,15 @@ bool processCommand(Document &d)
             maxPlayLength = d["message"]["maxPlayLength"].GetInt();
         }
 
-        playSample(file, loop, volume, exclusive, bgm, maxPlayLength);
+        if (d["message"].HasMember("nocache") && d["message"]["nocache"].IsBool())
+        {
+            nocache = d["message"]["nocache"].GetBool();
+        }
+
+        playSample(file, channel, loop, volume, exclusive, bgm, maxPlayLength, nocache);
         return true;
     }
+
     else if (0 == strcasecmp(command, "soundStopAll") || 0 == strcasecmp(command, "stopall"))
     {
         stopAll(true);
@@ -212,17 +254,31 @@ bool processCommand(Document &d)
     }
     else if (0 == strcasecmp(command, "soundFadeOut") || 0 == strcasecmp(command, "fadeout"))
     {
-        if (d["message"].HasMember("time"))
+        if (d["message"].HasMember("time") && d["message"]["time"].IsInt())
         {
             int time = d["message"]["time"].GetInt();
+            int channel = -1; // Por defecto, aplica a todos los canales (-1)
+
+            if (d["message"].HasMember("channel") && d["message"]["channel"].IsInt())
+            {
+                channel = d["message"]["channel"].GetInt(); // Canal especificado
+            }
+
             if (verbose)
             {
-                printf("Fading out all channels for %d milliseconds.\n", time);
+                printf("Fading out channel %d for %d milliseconds.\n", channel, time);
             }
-            Mix_FadeOutChannel(-1, time);
+
+            // Si el canal es -1 (todos los canales) o uno específico
+            if (channel == -1) {
+                Mix_FadeOutChannel(-1, time); // Fade out en todos los canales
+            } else {
+                Mix_FadeOutChannel(channel, time); // Fade out en el canal especificado
+            }
         }
         return true;
     }
+
     else if (0 == strcasecmp(command, "soundPrecache") || 0 == strcasecmp(command, "precache"))
     {
         if (!d.HasMember("message") || !d["message"].IsObject())
@@ -233,7 +289,7 @@ bool processCommand(Document &d)
 
         if (!d["message"].HasMember("file") || !d["message"]["file"].IsString())
         {
-            fprintf(stderr, "Message does does not have a 'message.file' property that is a string.\n");
+            fprintf(stderr, "Message does not have a 'message.file' property that is a string.\n");
             return false;
         }
 
@@ -246,6 +302,97 @@ bool processCommand(Document &d)
         }
         return true;
     }
+    else if (0 == strcasecmp(command, "soundSetVolume"))
+    {
+        if (!d.HasMember("message") || !d["message"].IsObject())
+        {
+            fprintf(stderr, "Message does not have a 'message' property that is an object.\n");
+            return false;
+        }
+
+        if (!d["message"].HasMember("channel") || !d["message"]["channel"].IsInt())
+        {
+            fprintf(stderr, "Message does not have a 'channel' property that is an int.\n");
+            return false;
+        }
+
+        if (!d["message"].HasMember("volume") || !d["message"]["volume"].IsFloat())
+        {
+            fprintf(stderr, "Message does not have a 'volume' property that is a float.\n");
+            return false;
+        }
+
+        int channel = d["message"]["channel"].GetInt();
+        float volume = d["message"]["volume"].GetFloat();
+
+        setChannelVolume(channel, volume);
+        return true;
+    }
+    else if (0 == strcasecmp(command, "soundPause"))
+    {
+        if (!d.HasMember("message") || !d["message"].IsObject())
+        {
+            fprintf(stderr, "Message does not have a 'message' property that is an object.\n");
+            return false;
+        }
+
+        if (!d["message"].HasMember("channel") || !d["message"]["channel"].IsInt())
+        {
+            fprintf(stderr, "Message does not have a 'channel' property that is an int.\n");
+            return false;
+        }
+
+        int channel = d["message"]["channel"].GetInt();
+        pauseChannel(channel);
+        return true;
+    }
+
+    else if (0 == strcasecmp(command, "soundResume"))
+    {
+        if (!d.HasMember("message") || !d["message"].IsObject())
+        {
+            fprintf(stderr, "Message does not have a 'message' property that is an object.\n");
+            return false;
+        }
+
+        if (!d["message"].HasMember("channel") || !d["message"]["channel"].IsInt())
+        {
+            fprintf(stderr, "Message does not have a 'channel' property that is an int.\n");
+            return false;
+        }
+
+        int channel = d["message"]["channel"].GetInt();
+        resumeChannel(channel);
+        return true;
+    }else if (0 == strcasecmp(command, "setMasterVolume"))
+{
+    if (d["message"].HasMember("volume") && d["message"]["volume"].IsFloat())
+    {
+        masterVolume = d["message"]["volume"].GetFloat();
+
+        // Asegurarse que el volumen master esté entre 0.0 y 1.0
+        if (masterVolume < 0.0f) masterVolume = 0.0f;
+        if (masterVolume > 1.0f) masterVolume = 1.0f;
+
+        if (verbose)
+        {
+            printf("Master volume set to %d%%\n", (int)(masterVolume * 100));
+        }
+
+        // Ajusta el volumen de todos los canales activos con el nuevo volumen master
+        for (int i = 0; i < Mix_AllocateChannels(-1); ++i)
+        {
+            int currentVolume = Mix_Volume(i, -1); // Obtiene el volumen actual del canal
+            Mix_Volume(i, (int)(currentVolume * masterVolume)); // Aplica el nuevo volumen master
+        }
+
+        return true;
+    }
+}
+
+
+    // Default case for unknown commands
+    fprintf(stderr, "Unknown command '%s'.\n", command);
     return false;
 }
 
@@ -342,7 +489,7 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
         }
         break;
 
-    case 200: //preload 
+    case 200: // preload
         if (arg != NULL && *arg != '\0')
         {
             printf("Preloading '%s'...\n", arg);
@@ -391,6 +538,7 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
             frequency = atoi(arg);
             printf("Setting frequency to %d Hz.\n", frequency);
         }
+        break;
 
     case ARGP_KEY_NO_ARGS:
         if (topic.empty())
@@ -400,6 +548,34 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
         break;
     }
     return 0;
+}
+
+void setChannelVolume(int channel, float volume)
+{
+    int sdlVolume = (int)(volume * MIX_MAX_VOLUME); // Escala el volumen de 0.0-1.0 a SDL_MIX_MAX_VOLUME
+    Mix_Volume(channel, sdlVolume);
+    if (verbose)
+    {
+        printf("Set volume of channel %d to %d%%\n", channel, (int)(volume * 100));
+    }
+}
+
+void pauseChannel(int channel)
+{
+    Mix_Pause(channel);
+    if (verbose)
+    {
+        printf("Paused channel %d\n", channel);
+    }
+}
+
+void resumeChannel(int channel)
+{
+    Mix_Resume(channel);
+    if (verbose)
+    {
+        printf("Resumed channel %d\n", channel);
+    }
 }
 
 int main(int argc, char **argv)
@@ -436,11 +612,13 @@ int main(int argc, char **argv)
     }
 
     // Precache audio samples
-    for (auto& preload : preloads)
+    for (auto &preload : preloads)
     {
-        precacheSample(preload.c_str());
+        if (precacheSample(preload.c_str()) == NULL)
+        {
+            fprintf(stderr, "Failed to precache sample '%s'.\n", preload.c_str());
+        }
     }
-
 
     // Connect to the MQTT server
     uint8_t reconnect = true;
@@ -488,7 +666,6 @@ int main(int argc, char **argv)
                     fprintf(stderr, "Reconnected to server %s (%d) \n", server.c_str(), rc);
                     mosquitto_subscribe(mosq, NULL, topic.c_str(), 0);
                 }
-                
             }
         }
 

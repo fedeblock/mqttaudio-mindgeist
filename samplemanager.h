@@ -9,13 +9,15 @@
 using namespace std;
 
 class SampleManager {
-    public:
-        Sample* GetSample(const char* uri);
-        void FreeAll();
-
-    private:
-        std::unordered_map<std::string, Sample*> _database;
-
+public:
+    SampleManager(bool verbose) : verbose(verbose) {}
+    Sample* GetSample(const char* uri);
+    void FreeAll();
+    void RemoveSample(const std::string& filename);
+private:
+    std::unordered_map<std::string, Sample*> _database;
+    bool verbose;  // Almacena el valor de verbose
 };
+
 
 #endif
