@@ -1,66 +1,68 @@
-#include <argp.h>
+#include <argp.h>                    // For argument parsing
 #include <limits.h>
-#include <signal.h>
-#include <stdio.h>
+#include <signal.h>                  // For signal handling
+#include <stdio.h>                   // For standard input/output functions
 #include <stdint.h>
 #include <stdlib.h>
-#include <sysexits.h>
-#include <unistd.h>
+#include <sysexits.h>                // For standard exit codes
+#include <unistd.h>                  // For POSIX API (e.g., getpid)
 
 #include <vector>
 #include <iostream>
 #include <string>
 #include <unordered_map>
 
-#include <mosquitto.h>
+#include <mosquitto.h>               // For MQTT client functionality
 
-#include "rapidjson/document.h"
+#include "rapidjson/document.h"      // For JSON parsing
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
 
-#include "SDL.h"
-#include "SDL_mixer.h"
+#include "SDL.h"                     // For SDL library functions
+#include "SDL_mixer.h"               // For SDL audio mixing functions
 
-#include "alsautil.h"
-#include "sample.h"
-#include "samplemanager.h"
-#include "SDL_rwhttp.h"
+#include "alsautil.h"                // For ALSA utility functions
+#include "sample.h"                  // For handling audio samples
+#include "samplemanager.h"           // For managing audio samples
+#include "SDL_rwhttp.h"              // For HTTP support in SDL
 
 using namespace std;
 using namespace rapidjson;
 
-
-// Prototipos de funciones
+// Function prototypes
 void setChannelVolume(int channel, float volume);
 void pauseChannel(int channel);
 void resumeChannel(int channel);
 bool processCommand(Document &d);
 
-
 const char *argp_program_version = "0.1.2";
 const char *argp_program_bug_address = "contact@mindgeist.com";
 
-int frequency = 44100;
-float masterVolume = 1.0f; // Volumen master por defecto (100%)
+// Global variables
+int frequency = 44100;                         // Audio frequency in Hz
+float masterVolume = 1.0f;                     // Master volume (0.0 to 1.0)
+std::unordered_map<int, float> channelVolumes; // Map of volumes per channel
 
-std::string server = "localhost";
-unsigned int port = 1883;
-std::string topic = "";
-std::string alsaDevice = "";
-std::string uriprefix = "";
+std::string server = "localhost";              // MQTT server address
+unsigned int port = 1883;                      // MQTT server port
+std::string topic = "";                        // MQTT topic to subscribe to
+std::string alsaDevice = "";                   // ALSA PCM device to use
+std::string uriprefix = "";                    // Prefix for audio file URIs
 
-vector<string> preloads;
+vector<string> preloads;                       // List of samples to preload
 
-bool run = true;
-bool verbose = false;
+bool run = true;                               // Main loop control flag
+bool verbose = false;                          // Verbose output flag
 
-SampleManager manager(verbose);  // Se pasa verbose al constructor
+SampleManager manager(verbose);                // Sample manager instance
 
+// Signal handler to stop the main loop
 void handle_signal(int s)
 {
     run = false;
 }
 
+// MQTT connection callback function
 void connect_callback(struct mosquitto *mosq, void *obj, int result)
 {
     switch (result)
@@ -85,6 +87,7 @@ void connect_callback(struct mosquitto *mosq, void *obj, int result)
     exit(EX_PROTOCOL);
 }
 
+// Function to stop all sounds
 void stopAll(bool alsoStopBgm)
 {
     if (verbose)
@@ -92,9 +95,10 @@ void stopAll(bool alsoStopBgm)
         printf("Stopping all sounds, %s background music.\n", alsoStopBgm ? "including" : "excluding");
     }
 
-    Mix_HaltChannel(-1);
+    Mix_HaltChannel(-1); // Stop all channels
 }
 
+// Function to preload an audio sample
 Sample *precacheSample(const char *file)
 {
     std::string filename = file;
@@ -109,40 +113,42 @@ Sample *precacheSample(const char *file)
     return manager.GetSample(filename.c_str());
 }
 
-
+// Function to play an audio sample with specified parameters
 void playSample(const char *file, int channel, bool loop, float volume, bool exclusive, bool isBgm, int maxPlayLength, bool nocache)
 {
-    if (volume < 0.0f)
+    // Limit the sample volume between 0.0 and 1.0
+    if (volume < 0.0f) volume = 0.0f;
+    if (volume > 1.0f) volume = 1.0f;
+
+    // Get the channel volume or set it to 1.0 if it doesn't exist
+    float channelVolume = 1.0f;
+    auto it = channelVolumes.find(channel);
+    if (it != channelVolumes.end())
     {
-        volume = 0.0f;
+        channelVolume = it->second;
     }
-    if (volume > 1.0f)
+    else
     {
-        volume = 1.0f;
+        channelVolumes[channel] = channelVolume; // Initialize to 1.0
     }
 
-    // Aplica el volumen master
-    float effectiveVolume = volume * masterVolume;
-    if (effectiveVolume < 0.0f)
-    {
-        effectiveVolume = 0.0f;
-    }
-    if (effectiveVolume > 1.0f)
-    {
-        effectiveVolume = 1.0f;
-    }
+    // Calculate the effective volume
+    float effectiveVolume = volume * channelVolume * masterVolume;
+    if (effectiveVolume < 0.0f) effectiveVolume = 0.0f;
+    if (effectiveVolume > 1.0f) effectiveVolume = 1.0f;
 
-    int sdlVolume = (int)(effectiveVolume * MIX_MAX_VOLUME);
+    int sdlVolume = static_cast<int>(effectiveVolume * MIX_MAX_VOLUME);
 
     if (verbose)
     {
-        printf("Playing sound %s, on channel %d, %s, at volume %d%%\n", file, channel, loop ? "looping" : "once", (int)(effectiveVolume * 100));
+        printf("Playing sound %s, on channel %d, %s, at effective volume %.2f (sample volume: %.2f, channel volume: %.2f, master volume: %.2f)\n",
+               file, channel, loop ? "looping" : "once", effectiveVolume, volume, channelVolume, masterVolume);
     }
 
-    // Si 'nocache' está activado, elimina el archivo del caché antes de precargarlo
+    // Handle the nocache parameter
     if (nocache)
     {
-        manager.RemoveSample(file);  // Elimina el archivo del caché
+        manager.RemoveSample(file);
         if (verbose)
         {
             printf("Removed sample '%s' from cache due to nocache=true.\n", file);
@@ -151,15 +157,14 @@ void playSample(const char *file, int channel, bool loop, float volume, bool exc
 
     if (exclusive)
     {
-        Mix_HaltChannel(-1); // Detiene todos los canales si es exclusivo
+        Mix_HaltChannel(-1); // Stop all channels if exclusive
     }
 
-    // Precarga el sample después de eliminarlo del caché, si nocache es true
-    Sample *sample = precacheSample(file); 
+    Sample *sample = precacheSample(file); // Preload the sample
     if (sample != NULL)
     {
-        Mix_Volume(channel, sdlVolume);                                             // Ajusta el volumen antes de reproducir
-        Mix_PlayChannelTimed(channel, sample->chunk, loop ? -1 : 0, maxPlayLength); // Reproduce en el canal seleccionado
+        Mix_Volume(channel, sdlVolume); // Adjust the volume before playing
+        Mix_PlayChannelTimed(channel, sample->chunk, loop ? -1 : 0, maxPlayLength); // Play on the selected channel
     }
     else
     {
@@ -167,7 +172,7 @@ void playSample(const char *file, int channel, bool loop, float volume, bool exc
     }
 }
 
-
+// Function to process incoming MQTT commands
 bool processCommand(Document &d)
 {
     if (!d.IsObject())
@@ -185,7 +190,7 @@ bool processCommand(Document &d)
     const char *command = d["command"].GetString();
     if (0 == strcasecmp(command, "soundPlay") || 0 == strcasecmp(command, "play"))
     {
-        // Verifica que el mensaje tenga todos los parámetros necesarios
+        // Verify that the message has all required parameters
         if (!d.HasMember("message") || !d["message"].IsObject())
         {
             fprintf(stderr, "Message does not have a 'message' property that is an object.\n");
@@ -199,15 +204,15 @@ bool processCommand(Document &d)
         }
 
         const char *file = d["message"]["file"].GetString();
-        int channel = 0; // Valor por defecto
+        int channel = 0; // Default channel
         bool loop = false;
         float volume = 1.0f;
         bool exclusive = false;
         bool bgm = false;
-        bool nocache = false; // Valor por defecto para nocache
+        bool nocache = false; // Default for nocache
         int maxPlayLength = -1;
 
-        // Ajusta los parámetros según el mensaje
+        // Adjust parameters based on the message
         if (d["message"].HasMember("channel") && d["message"]["channel"].IsInt())
         {
             channel = d["message"]["channel"].GetInt();
@@ -246,7 +251,6 @@ bool processCommand(Document &d)
         playSample(file, channel, loop, volume, exclusive, bgm, maxPlayLength, nocache);
         return true;
     }
-
     else if (0 == strcasecmp(command, "soundStopAll") || 0 == strcasecmp(command, "stopall"))
     {
         stopAll(true);
@@ -257,11 +261,11 @@ bool processCommand(Document &d)
         if (d["message"].HasMember("time") && d["message"]["time"].IsInt())
         {
             int time = d["message"]["time"].GetInt();
-            int channel = -1; // Por defecto, aplica a todos los canales (-1)
+            int channel = -1; // Default to all channels
 
             if (d["message"].HasMember("channel") && d["message"]["channel"].IsInt())
             {
-                channel = d["message"]["channel"].GetInt(); // Canal especificado
+                channel = d["message"]["channel"].GetInt(); // Specific channel
             }
 
             if (verbose)
@@ -269,16 +273,18 @@ bool processCommand(Document &d)
                 printf("Fading out channel %d for %d milliseconds.\n", channel, time);
             }
 
-            // Si el canal es -1 (todos los canales) o uno específico
-            if (channel == -1) {
-                Mix_FadeOutChannel(-1, time); // Fade out en todos los canales
-            } else {
-                Mix_FadeOutChannel(channel, time); // Fade out en el canal especificado
+            // Apply fade out to specified channel or all channels
+            if (channel == -1)
+            {
+                Mix_FadeOutChannel(-1, time); // Fade out all channels
+            }
+            else
+            {
+                Mix_FadeOutChannel(channel, time); // Fade out specific channel
             }
         }
         return true;
     }
-
     else if (0 == strcasecmp(command, "soundPrecache") || 0 == strcasecmp(command, "precache"))
     {
         if (!d.HasMember("message") || !d["message"].IsObject())
@@ -346,7 +352,6 @@ bool processCommand(Document &d)
         pauseChannel(channel);
         return true;
     }
-
     else if (0 == strcasecmp(command, "soundResume"))
     {
         if (!d.HasMember("message") || !d["message"].IsObject())
@@ -364,38 +369,58 @@ bool processCommand(Document &d)
         int channel = d["message"]["channel"].GetInt();
         resumeChannel(channel);
         return true;
-    }else if (0 == strcasecmp(command, "setMasterVolume"))
-{
-    if (d["message"].HasMember("volume") && d["message"]["volume"].IsFloat())
+    }
+    else if (0 == strcasecmp(command, "setMasterVolume"))
     {
-        masterVolume = d["message"]["volume"].GetFloat();
-
-        // Asegurarse que el volumen master esté entre 0.0 y 1.0
-        if (masterVolume < 0.0f) masterVolume = 0.0f;
-        if (masterVolume > 1.0f) masterVolume = 1.0f;
-
-        if (verbose)
+        if (d.HasMember("message") && d["message"].IsObject())
         {
-            printf("Master volume set to %d%%\n", (int)(masterVolume * 100));
-        }
+            if (d["message"].HasMember("volume") && d["message"]["volume"].IsFloat())
+            {
+                masterVolume = d["message"]["volume"].GetFloat();
 
-        // Ajusta el volumen de todos los canales activos con el nuevo volumen master
-        for (int i = 0; i < Mix_AllocateChannels(-1); ++i)
-        {
-            int currentVolume = Mix_Volume(i, -1); // Obtiene el volumen actual del canal
-            Mix_Volume(i, (int)(currentVolume * masterVolume)); // Aplica el nuevo volumen master
-        }
+                if (masterVolume < 0.0f) masterVolume = 0.0f;
+                if (masterVolume > 1.0f) masterVolume = 1.0f;
 
-        return true;
+                if (verbose)
+                {
+                    printf("Master volume set to %.2f\n", masterVolume);
+                }
+
+                // Update the volume of all channels
+                for (const auto& kv : channelVolumes)
+                {
+                    int channel = kv.first;
+                    float channelVolume = kv.second;
+
+                    // Recalculate the effective volume
+                    float effectiveVolume = channelVolume * masterVolume;
+                    if (effectiveVolume < 0.0f) effectiveVolume = 0.0f;
+                    if (effectiveVolume > 1.0f) effectiveVolume = 1.0f;
+
+                    int sdlVolume = static_cast<int>(effectiveVolume * MIX_MAX_VOLUME);
+                    Mix_Volume(channel, sdlVolume);
+
+                    if (verbose)
+                    {
+                        printf("Updated volume of channel %d to %.2f (effective volume: %.2f)\n", channel, channelVolume, effectiveVolume);
+                    }
+                }
+
+                return true;
+            }
+        }
+        fprintf(stderr, "Invalid message format for setMasterVolume\n");
+        return false;
+    }
+    else
+    {
+        // Default case for unknown commands
+        fprintf(stderr, "Unknown command '%s'.\n", command);
+        return false;
     }
 }
 
-
-    // Default case for unknown commands
-    fprintf(stderr, "Unknown command '%s'.\n", command);
-    return false;
-}
-
+// MQTT message callback function
 void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message)
 {
     bool match = 0;
@@ -413,20 +438,20 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
     }
 }
 
-// Initializes the application data
+// Initializes the SDL audio subsystem
 bool initSDLAudio(void)
 {
     SDL_Init(SDL_INIT_AUDIO);
     atexit(SDL_Quit);
 
-    // load support for the OGG and MOD sample/music formats
+    // Load support for OGG, MOD, and MP3 sample/music formats
     int flags = MIX_INIT_OGG | MIX_INIT_MOD | MIX_INIT_MP3;
     int initted = Mix_Init(flags);
-    if (initted & flags != flags)
+    if ((initted & flags) != flags)
     {
         fprintf(stderr, "Mix_Init: Failed to init required ogg and mod support!\n");
         fprintf(stderr, "Mix_Init: %s\n", Mix_GetError());
-        // handle error
+        // Handle error
         return false;
     }
 
@@ -445,7 +470,7 @@ bool initSDLAudio(void)
         return false;
     }
 
-    // set up HTTP/CURL library
+    // Set up HTTP/CURL library
     result = SDL_RWHttpInit();
     if (result != 0)
     {
@@ -456,6 +481,7 @@ bool initSDLAudio(void)
     return true;
 }
 
+// Argument parsing function
 static int parse_opt(int key, char *arg, struct argp_state *state)
 {
     switch (key)
@@ -470,7 +496,6 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
         {
             argp_error(state, "no server specified");
         }
-
         break;
 
     case 'p':
@@ -489,13 +514,14 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
         }
         break;
 
-    case 200: // preload
+    case 200: // Preload
         if (arg != NULL && *arg != '\0')
         {
             printf("Preloading '%s'...\n", arg);
             preloads.push_back(arg);
         }
         break;
+
     case 'd':
         if (arg != NULL && *arg != '\0')
         {
@@ -507,7 +533,6 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
         {
             argp_error(state, "no ALSA PCM device specified");
         }
-
         break;
 
     case 't':
@@ -550,16 +575,31 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
     return 0;
 }
 
+// Function to set the volume of a specific channel
 void setChannelVolume(int channel, float volume)
 {
-    int sdlVolume = (int)(volume * MIX_MAX_VOLUME); // Escala el volumen de 0.0-1.0 a SDL_MIX_MAX_VOLUME
+    // Limit volume between 0.0 and 1.0
+    if (volume < 0.0f) volume = 0.0f;
+    if (volume > 1.0f) volume = 1.0f;
+
+    // Save the channel volume
+    channelVolumes[channel] = volume;
+
+    // Calculate the effective volume
+    float effectiveVolume = volume * masterVolume;
+    if (effectiveVolume < 0.0f) effectiveVolume = 0.0f;
+    if (effectiveVolume > 1.0f) effectiveVolume = 1.0f;
+
+    int sdlVolume = static_cast<int>(effectiveVolume * MIX_MAX_VOLUME);
     Mix_Volume(channel, sdlVolume);
+
     if (verbose)
     {
-        printf("Set volume of channel %d to %d%%\n", channel, (int)(volume * 100));
+        printf("Set volume of channel %d to %.2f (effective volume: %.2f)\n", channel, volume, effectiveVolume);
     }
 }
 
+// Function to pause playback on a specific channel
 void pauseChannel(int channel)
 {
     Mix_Pause(channel);
@@ -569,6 +609,7 @@ void pauseChannel(int channel)
     }
 }
 
+// Function to resume playback on a specific channel
 void resumeChannel(int channel)
 {
     Mix_Resume(channel);
@@ -578,23 +619,25 @@ void resumeChannel(int channel)
     }
 }
 
+// Main function
 int main(int argc, char **argv)
 {
-    printf("mqttaudio %s - %s %s\n", argp_program_version, __DATE__, __TIME__);
-    printf("Copyright © 2016-2021 Mo Fang Heavy Industries LLC.  All rights reserved.\n\n");
+    printf("mqtt audio player %s - %s %s\n", argp_program_version, __DATE__, __TIME__);
+    printf("www.mindgeist.com.\n\n");
 
     struct argp_option options[] =
-        {
-            {"server", 's', "server", 0, "The MQTT server to connect to (default localhost)"},
-            {"port", 'p', "port", 0, "The MQTT server port (default 1883)"},
-            {"topic", 't', "topic", 0, "The MQTT server topic to subscribe to (wildcards allowed)"},
-            {"alsa-device", 'd', "pcm", 0, "The ALSA PCM device to use (setting this option overrides the SDL_AUDIODRIVER and AUDIODEV environment variables)"},
-            {"list-devices", 'l', 0, 0, "Lists available ALSA PCM devices for the 'd' switch."},
-            {"verbose", 'v', 0, 0, "Writes logging information for every sound played to stdout."},
-            {"frequency", 'f', "frequency_in_khz", 0, "Sets the frequency for the sound output."},
-            {"uri-prefix", 'u', "prefix", 0, "Sets a prefix to be prepended to all sound file locations."},
-            {"preload", 200, "url", 0, "Preloads a sound sample on startup."},
-            {0}};
+    {
+        {"server", 's', "server", 0, "The MQTT server to connect to (default localhost)"},
+        {"port", 'p', "port", 0, "The MQTT server port (default 1883)"},
+        {"topic", 't', "topic", 0, "The MQTT server topic to subscribe to (wildcards allowed)"},
+        {"alsa-device", 'd', "pcm", 0, "The ALSA PCM device to use (overrides SDL_AUDIODRIVER and AUDIODEV environment variables)"},
+        {"list-devices", 'l', 0, 0, "Lists available ALSA PCM devices for the 'd' switch"},
+        {"verbose", 'v', 0, 0, "Enables verbose logging"},
+        {"frequency", 'f', "frequency_in_khz", 0, "Sets the frequency for the sound output"},
+        {"uri-prefix", 'u', "prefix", 0, "Sets a prefix to be prepended to all sound file locations"},
+        {"preload", 200, "url", 0, "Preloads a sound sample on startup"},
+        {0}
+    };
 
     struct argp argp = {options, parse_opt};
 
@@ -611,7 +654,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // Precache audio samples
+    // Preload audio samples
     for (auto &preload : preloads)
     {
         if (precacheSample(preload.c_str()) == NULL)
@@ -626,7 +669,7 @@ int main(int argc, char **argv)
     struct mosquitto *mosq;
     int rc = 0;
 
-    // Intercept SIGINT and SIGTERM so we can exit the MQTT loop when they occur.
+    // Intercept SIGINT and SIGTERM to exit the MQTT loop when they occur
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
@@ -645,7 +688,7 @@ int main(int argc, char **argv)
         rc = mosquitto_connect(mosq, server.c_str(), port, 60);
         if (MOSQ_ERR_SUCCESS != rc)
         {
-            fprintf(stderr, "Failed to connect to server %s (%d) - ", server.c_str(), rc);
+            fprintf(stderr, "Failed to connect to server %s (%d)\n", server.c_str(), rc);
             return EX_UNAVAILABLE;
         }
 
@@ -654,16 +697,16 @@ int main(int argc, char **argv)
             rc = mosquitto_loop(mosq, -1, 1);
             if (run && rc)
             {
-                fprintf(stderr, "Server connection lost to server %s;  attempting to reconnect.\n", server.c_str());
+                fprintf(stderr, "Server connection lost to server %s; attempting to reconnect.\n", server.c_str());
                 sleep(10);
                 rc = mosquitto_reconnect(mosq);
                 if (MOSQ_ERR_SUCCESS != rc)
                 {
-                    fprintf(stderr, "Failed to reconnect to server %s (%d) \n", server.c_str(), rc);
+                    fprintf(stderr, "Failed to reconnect to server %s (%d)\n", server.c_str(), rc);
                 }
                 else
                 {
-                    fprintf(stderr, "Reconnected to server %s (%d) \n", server.c_str(), rc);
+                    fprintf(stderr, "Reconnected to server %s (%d)\n", server.c_str(), rc);
                     mosquitto_subscribe(mosq, NULL, topic.c_str(), 0);
                 }
             }
@@ -672,7 +715,7 @@ int main(int argc, char **argv)
         mosquitto_destroy(mosq);
     }
 
-    printf("Exiting mofang_player...\n");
+    printf("Exiting mqtt audio player...\n");
 
     printf("Cleaning up MQTT connection...\n");
     mosquitto_lib_cleanup();
