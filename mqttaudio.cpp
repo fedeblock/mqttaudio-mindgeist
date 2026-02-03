@@ -1,30 +1,38 @@
-#include <argp.h>                    // For argument parsing
+#include <argp.h> // For argument parsing
 #include <limits.h>
-#include <signal.h>                  // For signal handling
-#include <stdio.h>                   // For standard input/output functions
+#include <signal.h> // For signal handling
+#include <stdio.h>  // For standard input/output functions
 #include <stdint.h>
 #include <stdlib.h>
-#include <sysexits.h>                // For standard exit codes
-#include <unistd.h>                  // For POSIX API (e.g., getpid)
+#include <sysexits.h> // For standard exit codes
+#include <unistd.h>   // For POSIX API (e.g., getpid)
 
 #include <vector>
 #include <iostream>
 #include <string>
 #include <unordered_map>
 
-#include <mosquitto.h>               // For MQTT client functionality
+#include <mosquitto.h> // For MQTT client functionality
 
-#include "rapidjson/document.h"      // For JSON parsing
+#include "rapidjson/document.h" // For JSON parsing
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
 
-#include "SDL.h"                     // For SDL library functions
-#include "SDL_mixer.h"               // For SDL audio mixing functions
+#include "SDL.h"       // For SDL library functions
+#include "SDL_mixer.h" // For SDL audio mixing functions
 
-#include "alsautil.h"                // For ALSA utility functions
-#include "sample.h"                  // For handling audio samples
-#include "samplemanager.h"           // For managing audio samples
-#include "SDL_rwhttp.h"              // For HTTP support in SDL
+#include "alsautil.h"      // For ALSA utility functions
+#include "sample.h"        // For handling audio samples
+#include "samplemanager.h" // For managing audio samples
+#include "SDL_rwhttp.h"    // For HTTP support in SDL
+
+#include "streaming_audio.h"
+#include "elevenlabs_stream.h"
+
+#include <thread>
+#include <vector>
+#include <chrono>
+
 
 using namespace std;
 using namespace rapidjson;
@@ -43,18 +51,18 @@ int frequency = 44100;                         // Audio frequency in Hz
 float masterVolume = 1.0f;                     // Master volume (0.0 to 1.0)
 std::unordered_map<int, float> channelVolumes; // Map of volumes per channel
 
-std::string server = "localhost";              // MQTT server address
-unsigned int port = 1883;                      // MQTT server port
-std::string topic = "";                        // MQTT topic to subscribe to
-std::string alsaDevice = "";                   // ALSA PCM device to use
-std::string uriprefix = "";                    // Prefix for audio file URIs
+std::string server = "localhost"; // MQTT server address
+unsigned int port = 1883;         // MQTT server port
+std::string topic = "";           // MQTT topic to subscribe to
+std::string alsaDevice = "";      // ALSA PCM device to use
+std::string uriprefix = "";       // Prefix for audio file URIs
 
-vector<string> preloads;                       // List of samples to preload
+vector<string> preloads; // List of samples to preload
 
-bool run = true;                               // Main loop control flag
-bool verbose = false;                          // Verbose output flag
+bool run = true;      // Main loop control flag
+bool verbose = false; // Verbose output flag
 
-SampleManager manager(verbose);                // Sample manager instance
+SampleManager manager(verbose); // Sample manager instance
 
 // Signal handler to stop the main loop
 void handle_signal(int s)
@@ -117,8 +125,10 @@ Sample *precacheSample(const char *file)
 void playSample(const char *file, int channel, bool loop, float volume, bool exclusive, bool isBgm, int maxPlayLength, bool nocache)
 {
     // Limit the sample volume between 0.0 and 1.0
-    if (volume < 0.0f) volume = 0.0f;
-    if (volume > 1.0f) volume = 1.0f;
+    if (volume < 0.0f)
+        volume = 0.0f;
+    if (volume > 1.0f)
+        volume = 1.0f;
 
     // Get the channel volume or set it to 1.0 if it doesn't exist
     float channelVolume = 1.0f;
@@ -134,8 +144,10 @@ void playSample(const char *file, int channel, bool loop, float volume, bool exc
 
     // Calculate the effective volume
     float effectiveVolume = volume * channelVolume * masterVolume;
-    if (effectiveVolume < 0.0f) effectiveVolume = 0.0f;
-    if (effectiveVolume > 1.0f) effectiveVolume = 1.0f;
+    if (effectiveVolume < 0.0f)
+        effectiveVolume = 0.0f;
+    if (effectiveVolume > 1.0f)
+        effectiveVolume = 1.0f;
 
     int sdlVolume = static_cast<int>(effectiveVolume * MIX_MAX_VOLUME);
 
@@ -163,7 +175,7 @@ void playSample(const char *file, int channel, bool loop, float volume, bool exc
     Sample *sample = precacheSample(file); // Preload the sample
     if (sample != NULL)
     {
-        Mix_Volume(channel, sdlVolume); // Adjust the volume before playing
+        Mix_Volume(channel, sdlVolume);                                             // Adjust the volume before playing
         Mix_PlayChannelTimed(channel, sample->chunk, loop ? -1 : 0, maxPlayLength); // Play on the selected channel
     }
     else
@@ -253,6 +265,8 @@ bool processCommand(Document &d)
     }
     else if (0 == strcasecmp(command, "soundStopAll") || 0 == strcasecmp(command, "stopall"))
     {
+        if (verbose)
+            printf("STOPALL: deteniendo todos los canales\n");
         stopAll(true);
         return true;
     }
@@ -378,8 +392,10 @@ bool processCommand(Document &d)
             {
                 masterVolume = d["message"]["volume"].GetFloat();
 
-                if (masterVolume < 0.0f) masterVolume = 0.0f;
-                if (masterVolume > 1.0f) masterVolume = 1.0f;
+                if (masterVolume < 0.0f)
+                    masterVolume = 0.0f;
+                if (masterVolume > 1.0f)
+                    masterVolume = 1.0f;
 
                 if (verbose)
                 {
@@ -387,15 +403,17 @@ bool processCommand(Document &d)
                 }
 
                 // Update the volume of all channels
-                for (const auto& kv : channelVolumes)
+                for (const auto &kv : channelVolumes)
                 {
                     int channel = kv.first;
                     float channelVolume = kv.second;
 
                     // Recalculate the effective volume
                     float effectiveVolume = channelVolume * masterVolume;
-                    if (effectiveVolume < 0.0f) effectiveVolume = 0.0f;
-                    if (effectiveVolume > 1.0f) effectiveVolume = 1.0f;
+                    if (effectiveVolume < 0.0f)
+                        effectiveVolume = 0.0f;
+                    if (effectiveVolume > 1.0f)
+                        effectiveVolume = 1.0f;
 
                     int sdlVolume = static_cast<int>(effectiveVolume * MIX_MAX_VOLUME);
                     Mix_Volume(channel, sdlVolume);
@@ -412,6 +430,246 @@ bool processCommand(Document &d)
         fprintf(stderr, "Invalid message format for setMasterVolume\n");
         return false;
     }
+    else if (0 == strcasecmp(command, "stream"))
+    {
+        if (!d.HasMember("message") || !d["message"].IsObject())
+        {
+            fprintf(stderr, "Mensaje 'stream' inválido: falta objeto 'message'.\n");
+            return false;
+        }
+        const auto &msg = d["message"];
+        if (!msg.HasMember("url") || !msg["url"].IsString())
+        {
+            fprintf(stderr, "Mensaje 'stream' inválido: falta campo 'url'.\n");
+            return false;
+        }
+
+        std::string url = msg["url"].GetString();
+        int loops = msg.HasMember("loops") && msg["loops"].IsInt() ? msg["loops"].GetInt() : 0;
+        float volume = msg.HasMember("volume") && msg["volume"].IsNumber() ? msg["volume"].GetFloat() : 1.0f;
+        int channel = msg.HasMember("channel") && msg["channel"].IsInt() ? msg["channel"].GetInt() : 9; // canal default
+
+        // Calcula el volumen real considerando el masterVolume
+        float effectiveVolume = volume * masterVolume;
+        if (effectiveVolume < 0.0f)
+            effectiveVolume = 0.0f;
+        if (effectiveVolume > 1.0f)
+            effectiveVolume = 1.0f;
+
+        if (verbose)
+        {
+            printf("STREAM: url=%s, channel=%d, loops=%d, volume=%.2f\n", url.c_str(), channel, loops, effectiveVolume);
+        }
+
+        play_streaming_url_async(url, channel, effectiveVolume, loops);
+        return true;
+    }
+    else if (0 == strcasecmp(command, "stop"))
+    {
+        if (!d.HasMember("message") || !d["message"].IsObject())
+        {
+            fprintf(stderr, "Mensaje 'stop' inválido: falta objeto 'message'.\n");
+            return false;
+        }
+        const auto &msg = d["message"];
+        if (!msg.HasMember("channel") || !msg["channel"].IsInt())
+        {
+            fprintf(stderr, "Mensaje 'stop' inválido: falta campo 'channel'.\n");
+            return false;
+        }
+        int channel = msg["channel"].GetInt();
+        if (verbose)
+            printf("STOP: deteniendo canal %d\n", channel);
+        Mix_HaltChannel(channel);
+        return true;
+    }
+    else if (0 == strcasecmp(command, "pause-all"))
+    {
+        if (verbose)
+            printf("PAUSE-ALL: pausando todos los canales\n");
+        Mix_Pause(-1);
+        return true;
+    }
+    else if (0 == strcasecmp(command, "resume-all"))
+    {
+        if (verbose)
+            printf("RESUME-ALL: reanudando todos los canales\n");
+        Mix_Resume(-1);
+        return true;
+    }
+    else if (0 == strcasecmp(command, "elevenlabs_tts"))
+    {
+        if (!d.HasMember("message") || !d["message"].IsObject())
+        {
+            fprintf(stderr, "Mensaje 'elevenlabs_tts' inválido: falta objeto 'message'.\n");
+            return false;
+        }
+        const auto &msg = d["message"];
+        if (!msg.HasMember("voice_id") || !msg["voice_id"].IsString() ||
+            !msg.HasMember("api_key") || !msg["api_key"].IsString() ||
+            !msg.HasMember("text") || !msg["text"].IsString())
+        {
+            fprintf(stderr, "Mensaje 'elevenlabs_tts' inválido: faltan campos obligatorios.\n");
+            return false;
+        }
+        std::string voice_id = msg["voice_id"].GetString();
+        std::string api_key = msg["api_key"].GetString();
+        std::string text = msg["text"].GetString();
+        std::string format = msg.HasMember("format") && msg["format"].IsString()
+                                 ? msg["format"].GetString()
+                                 : "mp3";
+        float volume = msg.HasMember("volume") && msg["volume"].IsNumber()
+                           ? msg["volume"].GetFloat()
+                           : 1.0f;
+        int channel = msg.HasMember("channel") && msg["channel"].IsInt()
+                          ? msg["channel"].GetInt()
+                          : 10;
+        int loops = msg.HasMember("loops") && msg["loops"].IsInt()
+                        ? msg["loops"].GetInt()
+                        : 0;
+
+        float effVol = volume * masterVolume;
+        if (effVol < 0.0f)
+            effVol = 0.0f;
+        if (effVol > 1.0f)
+            effVol = 1.0f;
+
+        if (verbose)
+            printf("ELEVENLABS: voice=%s, text='%s', channel=%d, volume=%.2f\n",
+                   voice_id.c_str(), text.c_str(), channel, effVol);
+
+        // Lanza en hilo asíncrono
+        play_elevenlabs_stream_async(voice_id, api_key, text, format, channel, effVol, loops);
+        return true;
+    }
+    else if (0 == strcasecmp(command, "playSequence"))
+    {
+        if (!d.HasMember("message") || !d["message"].IsObject())
+        {
+            fprintf(stderr, "Message does not have a 'message' property that is an object.\n");
+            return false;
+        }
+
+        const auto &msg = d["message"];
+
+        // Verificar que existe el array de archivos
+        if (!msg.HasMember("files") || !msg["files"].IsArray())
+        {
+            fprintf(stderr, "playSequence command requires 'files' array.\n");
+            return false;
+        }
+
+        // Parámetros opcionales
+        int channel = msg.HasMember("channel") && msg["channel"].IsInt() ? msg["channel"].GetInt() : 0;
+        bool exclusive = msg.HasMember("exclusive") && msg["exclusive"].IsBool() ? msg["exclusive"].GetBool() : false;
+        float volume = msg.HasMember("volume") && msg["volume"].IsNumber() ? msg["volume"].GetFloat() : 1.0f;
+        bool loop = msg.HasMember("loop") && msg["loop"].IsBool() ? msg["loop"].GetBool() : false;
+        int delayMs = msg.HasMember("delay") && msg["delay"].IsInt() ? msg["delay"].GetInt() : 100; // Delay entre archivos
+
+        // Calcular volumen efectivo
+        float channelVolume = 1.0f;
+        auto it = channelVolumes.find(channel);
+        if (it != channelVolumes.end())
+        {
+            channelVolume = it->second;
+        }
+        else
+        {
+            channelVolumes[channel] = channelVolume;
+        }
+
+        float effectiveVolume = volume * channelVolume * masterVolume;
+        if (effectiveVolume < 0.0f)
+            effectiveVolume = 0.0f;
+        if (effectiveVolume > 1.0f)
+            effectiveVolume = 1.0f;
+        int sdlVolume = static_cast<int>(effectiveVolume * MIX_MAX_VOLUME);
+
+        if (verbose)
+        {
+            printf("PLAYSEQUENCE: channel=%d, exclusive=%s, volume=%.2f, files=%d\n",
+                   channel, exclusive ? "true" : "false", effectiveVolume, msg["files"].Size());
+        }
+
+        // Si exclusive, detener todos los canales
+        if (exclusive)
+        {
+            Mix_HaltChannel(-1);
+        }
+
+        // Crear vector de archivos
+        std::vector<std::string> files;
+        for (rapidjson::SizeType i = 0; i < msg["files"].Size(); i++)
+        {
+            if (msg["files"][i].IsString())
+            {
+                files.push_back(msg["files"][i].GetString());
+            }
+        }
+
+        // Copiar variables globales para evitar warnings de captura
+        std::string localUriPrefix = uriprefix;
+        bool localVerbose = verbose;
+        
+        // Lanzar secuencia en hilo asíncrono
+        std::thread([files, channel, sdlVolume, delayMs, loop, localUriPrefix, localVerbose]()
+                    {
+        do {
+            for (const auto& file : files)
+            {
+                if (!run) break; // Respetar señal de parada global
+
+                std::string filename = file;
+                if (localUriPrefix.length() > 0)
+                {
+                    filename = localUriPrefix + filename;
+                }
+
+                if (localVerbose)
+                {
+                    printf("Playing sequence file: %s on channel %d\n", filename.c_str(), channel);
+                }
+
+                // Obtener sample (usar el manager existente)
+                Sample* sample = manager.GetSample(filename.c_str());
+                if (sample != nullptr && sample->chunk != nullptr)
+                {
+                    Mix_Volume(channel, sdlVolume);
+                    Mix_PlayChannel(channel, sample->chunk, 0); // No loop individual
+
+                    // Esperar a que termine el archivo actual
+                    while (Mix_Playing(channel) && run)
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    }
+
+                    // Delay entre archivos (si no es el último)
+                    if (&file != &files.back() && delayMs > 0 && run)
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+                    }
+                }
+                else
+                {
+                    if (localVerbose)
+                    {
+                        printf("Error loading sequence file: %s\n", filename.c_str());
+                    }
+                }
+
+                if (!run) break;
+            }
+        } while (loop && run);
+
+        if (localVerbose)
+        {
+            printf("Sequence completed on channel %d\n", channel);
+        } })
+            .detach();
+
+        return true;
+    }
+
     else
     {
         // Default case for unknown commands
@@ -441,8 +699,40 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 // Initializes the SDL audio subsystem
 bool initSDLAudio(void)
 {
+    // Configurar hints de SDL antes de inicializar
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_APP_NAME, "mqttaudio");
+    SDL_SetHint(SDL_HINT_AUDIO_RESAMPLING_MODE, "linear");
+    SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback");
+    
+    // Si hay dispositivo ALSA específico configurado
+    const char* alsaDevice = getenv("AUDIODEV");
+    if (alsaDevice && strlen(alsaDevice) > 0) {
+        // SDL_AUDIODRIVER ya está configurado por parse_opt cuando se usa -d
+        if (verbose) {
+            printf("Using ALSA device: %s\n", alsaDevice);
+        }
+    }
+
     SDL_Init(SDL_INIT_AUDIO);
     atexit(SDL_Quit);
+
+    // Configurar parámetros de audio más robustos
+    int audio_rate = frequency;
+    Uint16 audio_format = AUDIO_S16LSB; // Usar LSB específicamente
+    int audio_channels = 2;
+    int audio_buffers = 4096; // Buffer más grande (era 512)
+    
+    // En sistemas embebidos, ajustar según la frecuencia
+    if (frequency <= 22050) {
+        audio_buffers = 2048;
+    } else if (frequency >= 48000) {
+        audio_buffers = 8192;
+    }
+    
+    if (verbose) {
+        printf("Audio config: rate=%d, format=%d, channels=%d, buffers=%d\n", 
+               audio_rate, audio_format, audio_channels, audio_buffers);
+    }
 
     // Load support for OGG, MOD, and MP3 sample/music formats
     int flags = MIX_INIT_OGG | MIX_INIT_MOD | MIX_INIT_MP3;
@@ -451,30 +741,57 @@ bool initSDLAudio(void)
     {
         fprintf(stderr, "Mix_Init: Failed to init required ogg and mod support!\n");
         fprintf(stderr, "Mix_Init: %s\n", Mix_GetError());
-        // Handle error
         return false;
     }
 
-    // Set up the audio stream
-    int result = Mix_OpenAudio(frequency, AUDIO_S16SYS, 2, 512);
+    // Intentar abrir audio con configuración robusta
+    int result = Mix_OpenAudio(audio_rate, audio_format, audio_channels, audio_buffers);
     if (result < 0)
     {
         fprintf(stderr, "Unable to open audio: %s\n", SDL_GetError());
-        return false;
+        
+        // Intentar con configuración de fallback
+        if (verbose) {
+            printf("Trying fallback audio configuration...\n");
+        }
+        
+        // Reducir calidad para compatibility
+        result = Mix_OpenAudio(22050, AUDIO_S16LSB, 2, 2048);
+        if (result < 0) {
+            fprintf(stderr, "Fallback audio failed: %s\n", SDL_GetError());
+            return false;
+        } else {
+            printf("Warning: Using fallback audio configuration (22050 Hz)\n");
+        }
     }
 
-    result = Mix_AllocateChannels(16);
+    // Obtener configuración real de audio
+    int real_freq, real_channels;
+    Uint16 real_format;
+    Mix_QuerySpec(&real_freq, &real_format, &real_channels);
+    if (verbose) {
+        printf("Actual audio: %d Hz, %d channels, format %d\n", 
+               real_freq, real_channels, real_format);
+    }
+
+    // Allocar más canales para mayor flexibilidad
+    result = Mix_AllocateChannels(32); // Era 16, ahora 32
     if (result < 0)
     {
         fprintf(stderr, "Unable to allocate mixing channels: %s\n", SDL_GetError());
-        return false;
+        // No es crítico, continuar con menos canales
+        Mix_AllocateChannels(16);
+    }
+    
+    if (verbose) {
+        printf("Allocated %d mixing channels\n", Mix_AllocateChannels(-1));
     }
 
     // Set up HTTP/CURL library
     result = SDL_RWHttpInit();
     if (result != 0)
     {
-        fprintf(stderr, "Unable to initialize web download library (%s).\n", result);
+        fprintf(stderr, "Unable to initialize web download library (%d)\n", result);
         return false;
     }
 
@@ -579,16 +896,20 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
 void setChannelVolume(int channel, float volume)
 {
     // Limit volume between 0.0 and 1.0
-    if (volume < 0.0f) volume = 0.0f;
-    if (volume > 1.0f) volume = 1.0f;
+    if (volume < 0.0f)
+        volume = 0.0f;
+    if (volume > 1.0f)
+        volume = 1.0f;
 
     // Save the channel volume
     channelVolumes[channel] = volume;
 
     // Calculate the effective volume
     float effectiveVolume = volume * masterVolume;
-    if (effectiveVolume < 0.0f) effectiveVolume = 0.0f;
-    if (effectiveVolume > 1.0f) effectiveVolume = 1.0f;
+    if (effectiveVolume < 0.0f)
+        effectiveVolume = 0.0f;
+    if (effectiveVolume > 1.0f)
+        effectiveVolume = 1.0f;
 
     int sdlVolume = static_cast<int>(effectiveVolume * MIX_MAX_VOLUME);
     Mix_Volume(channel, sdlVolume);
@@ -626,18 +947,17 @@ int main(int argc, char **argv)
     printf("www.mindgeist.com.\n\n");
 
     struct argp_option options[] =
-    {
-        {"server", 's', "server", 0, "The MQTT server to connect to (default localhost)"},
-        {"port", 'p', "port", 0, "The MQTT server port (default 1883)"},
-        {"topic", 't', "topic", 0, "The MQTT server topic to subscribe to (wildcards allowed)"},
-        {"alsa-device", 'd', "pcm", 0, "The ALSA PCM device to use (overrides SDL_AUDIODRIVER and AUDIODEV environment variables)"},
-        {"list-devices", 'l', 0, 0, "Lists available ALSA PCM devices for the 'd' switch"},
-        {"verbose", 'v', 0, 0, "Enables verbose logging"},
-        {"frequency", 'f', "frequency_in_khz", 0, "Sets the frequency for the sound output"},
-        {"uri-prefix", 'u', "prefix", 0, "Sets a prefix to be prepended to all sound file locations"},
-        {"preload", 200, "url", 0, "Preloads a sound sample on startup"},
-        {0}
-    };
+        {
+            {"server", 's', "server", 0, "The MQTT server to connect to (default localhost)"},
+            {"port", 'p', "port", 0, "The MQTT server port (default 1883)"},
+            {"topic", 't', "topic", 0, "The MQTT server topic to subscribe to (wildcards allowed)"},
+            {"alsa-device", 'd', "pcm", 0, "The ALSA PCM device to use (overrides SDL_AUDIODRIVER and AUDIODEV environment variables)"},
+            {"list-devices", 'l', 0, 0, "Lists available ALSA PCM devices for the 'd' switch"},
+            {"verbose", 'v', 0, 0, "Enables verbose logging"},
+            {"frequency", 'f', "frequency_in_khz", 0, "Sets the frequency for the sound output"},
+            {"uri-prefix", 'u', "prefix", 0, "Sets a prefix to be prepended to all sound file locations"},
+            {"preload", 200, "url", 0, "Preloads a sound sample on startup"},
+            {0}};
 
     struct argp argp = {options, parse_opt};
 
