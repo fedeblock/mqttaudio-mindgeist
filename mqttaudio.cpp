@@ -977,6 +977,11 @@ void resumeChannel(int channel)
 // Main function
 int main(int argc, char **argv)
 {
+    // Con stdout en una tubería (journald, redirecciones) la salida va por defecto con
+    // búfer completo y las líneas no aparecen hasta cerrar el proceso. En modo línea cada
+    // mensaje sale al momento, como ya hace stderr.
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+
     printf("mqtt audio player %s - %s %s\n", argp_program_version, __DATE__, __TIME__);
     printf("www.mindgeist.com.\n\n");
 
