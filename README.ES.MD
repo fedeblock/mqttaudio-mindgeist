@@ -347,6 +347,15 @@ mosquitto_pub -h localhost -t "voice/audio" -m '{"command": "play", "message": {
 
 ## Configuración Avanzada
 
+### Autenticación MQTT
+
+Si el broker exige usuario y contraseña, `mqttaudio` los toma así:
+
+- **Usuario:** `--username` (`-U`) o la variable `MQTT_USERNAME`.
+- **Contraseña:** **solo** de la variable `MQTT_PASSWORD`. No hay opción de línea de órdenes para ella, así que no aparece en `ps` ni en el fichero de la unidad de systemd.
+
+Con systemd, cada servicio guarda las suyas en un fichero con permisos 600 y lo carga con `EnvironmentFile=` (ver [`systemd/blk.conf`](systemd/blk.conf)). Si el broker rechaza la conexión, `mqttaudio` lo dice con claridad (usuario o contraseña erróneos, o sin permiso) y sale con el código 76; nunca registra la contraseña. `./test_auth.sh` lo comprueba de extremo a extremo contra un mosquitto con ACL.
+
 ### Variables de Entorno
 
 ```bash

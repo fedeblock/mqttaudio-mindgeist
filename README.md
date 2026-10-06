@@ -335,6 +335,10 @@ The player listens to MQTT messages in JSON format and processes commands accord
 }
 ```
 
+## MQTT authentication
+
+If the broker requires a user name and password, `mqttaudio` reads the user name from `--username` (`-U`) or `MQTT_USERNAME`, and the password **only** from the `MQTT_PASSWORD` environment variable. There is no command-line option for the password, so it never shows up in `ps` or in a systemd unit. With systemd, keep each service's credentials in a file with mode 600 and load it with `EnvironmentFile=`; see [`systemd/blk.conf`](systemd/blk.conf). When the broker refuses the connection, `mqttaudio` says why (bad user name or password, or not authorized) and exits with code 76. It never logs the password. `./test_auth.sh` checks all of this end to end against a mosquitto broker with an ACL.
+
 ## How It Works
 
 - The player initializes SDL and SDL_mixer for audio playback.

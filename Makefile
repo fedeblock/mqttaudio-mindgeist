@@ -21,7 +21,11 @@ test: test_redact test_tts_request
 	./test_redact
 	./test_tts_request
 
-.PHONY: all clean test install-dependencies
+# Prueba la autenticación MQTT contra un mosquitto local con ACL (necesita mosquitto y el binario)
+test-auth: mqttaudio
+	./test_auth.sh
+
+.PHONY: all clean test test-auth install-dependencies
 
 clean:
 	rm -f mqttaudio test_redact test_tts_request

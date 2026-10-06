@@ -55,6 +55,7 @@ std::unordered_map<int, float> channelVolumes; // Map of volumes per channel
 std::string server = "localhost"; // MQTT server address
 unsigned int port = 1883;         // MQTT server port
 std::string topic = "";           // MQTT topic to subscribe to
+std::string mqttUsername = "";    // MQTT user name (also MQTT_USERNAME); the password is only read from MQTT_PASSWORD
 std::string alsaDevice = "";      // ALSA PCM device to use
 std::string uriprefix = "";       // Prefix for audio file URIs
 
@@ -88,6 +89,12 @@ void connect_callback(struct mosquitto *mosq, void *obj, int result)
         break;
     case 3:
         fprintf(stderr, "Connection refused - broker unavailable.\n");
+        break;
+    case 4:
+        fprintf(stderr, "Connection refused - bad user name or password. Check MQTT_USERNAME and MQTT_PASSWORD.\n");
+        break;
+    case 5:
+        fprintf(stderr, "Connection refused - not authorized. The broker requires a user name and password (MQTT_USERNAME, MQTT_PASSWORD) or this user may not connect.\n");
         break;
     default:
         fprintf(stderr, "Unknown error in connect callback, rc=%d\n", result);
@@ -886,6 +893,18 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
         }
         break;
 
+    case 'U':
+        if (arg != NULL && *arg != '\0')
+        {
+            printf("Setting MQTT user name to '%s'\n", arg);
+            mqttUsername = arg;
+        }
+        else
+        {
+            argp_error(state, "no user name specified");
+        }
+        break;
+
     case 't':
         if (arg != NULL && *arg != '\0')
         {
@@ -993,6 +1012,7 @@ int main(int argc, char **argv)
             {"alsa-device", 'd', "pcm", 0, "The ALSA PCM device to use (overrides SDL_AUDIODRIVER and AUDIODEV environment variables)"},
             {"list-devices", 'l', 0, 0, "Lists available ALSA PCM devices for the 'd' switch"},
             {"verbose", 'v', 0, 0, "Enables verbose logging"},
+            {"username", 'U', "user", 0, "MQTT user name (default: MQTT_USERNAME). The password is read only from the MQTT_PASSWORD environment variable, never from the command line"},
             {"frequency", 'f', "frequency_in_khz", 0, "Sets the frequency for the sound output"},
             {"uri-prefix", 'u', "prefix", 0, "Sets a prefix to be prepended to all sound file locations"},
             {"preload", 200, "url", 0, "Preloads a sound sample on startup"},
@@ -1040,6 +1060,26 @@ int main(int argc, char **argv)
 
     if (mosq)
     {
+        // Authentication. The user name comes from --username or MQTT_USERNAME. The password
+        // only comes from MQTT_PASSWORD, so it never appears in the process list or the unit file.
+        const char *envUser = getenv("MQTT_USERNAME");
+        const char *envPass = getenv("MQTT_PASSWORD");
+        std::string authUser = !mqttUsername.empty() ? mqttUsername : (envUser != nullptr ? envUser : "");
+        if (!authUser.empty())
+        {
+            rc = mosquitto_username_pw_set(mosq, authUser.c_str(), (envPass != nullptr && envPass[0] != '\0') ? envPass : nullptr);
+            if (MOSQ_ERR_SUCCESS != rc)
+            {
+                fprintf(stderr, "Failed to set the MQTT credentials (%d)\n", rc);
+                return EX_SOFTWARE;
+            }
+            printf("Authenticating to the MQTT server as '%s'.\n", authUser.c_str());
+        }
+        else if (envPass != nullptr && envPass[0] != '\0')
+        {
+            fprintf(stderr, "MQTT_PASSWORD is set but there is no user name (--username or MQTT_USERNAME); ignoring it.\n");
+        }
+
         mosquitto_connect_callback_set(mosq, connect_callback);
         mosquitto_message_callback_set(mosq, message_callback);
 
