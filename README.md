@@ -309,9 +309,9 @@ The player listens to MQTT messages in JSON format and processes commands accord
 
 **Parameters**:
 
-- `voice_id` (string, required): ElevenLabs voice ID.
-- `text` (string, required): Text to synthesize.
-- `format` (string, optional): Audio format (default `mp3`).
+- `voice_id` (string, required): ElevenLabs voice ID. Letters, digits, `_` and `-` only (max 64): it goes into the URL, so anything else is rejected.
+- `text` (string, required): Text to synthesize, in UTF-8. Quotes, backslashes, newlines and control characters are escaped when the request is built. Invalid UTF-8 is rejected with a log message.
+- `format` (string, optional): Audio format (default `mp3`). Letters, digits, `_` and `-` only (max 8): it goes into an HTTP header.
 - `channel` (int, optional): Channel (default `10`).
 - `volume` (float, optional): Volume, 0.0 to 1.0 (default `1.0`).
 - `loops` (int, optional): Repetitions (default `0`).

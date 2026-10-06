@@ -184,10 +184,10 @@ make install-dependencies  # Solo Ubuntu/Debian
 ```
 
 **Parámetros**:
-- `voice_id` (string, **required**): ID de voz de ElevenLabs
+- `voice_id` (string, **required**): ID de voz de ElevenLabs. Solo letras, números, `_` y `-` (máximo 64): va dentro de la URL, y cualquier otro carácter se rechaza.
 - `api_key` (string, **obsoleto**): clave de ElevenLabs en el mensaje. Viaja en claro por MQTT y por eso **no se recomienda**. Solo se usa si no hay `ELEVENLABS_API_KEY` en el entorno, y entonces se registra un aviso.
-- `text` (string, **required**): Texto a sintetizar
-- `format` (string): Formato de audio ("mp3", "wav", default: "mp3")
+- `text` (string, **required**): Texto a sintetizar, en UTF-8. Las comillas, barras, saltos de línea y caracteres de control se escapan al construir la petición; un texto con UTF-8 inválido se rechaza con un aviso en el registro.
+- `format` (string): Formato de audio ("mp3", "wav", default: "mp3"). Solo letras, números, `_` y `-` (máximo 8): va dentro de una cabecera HTTP.
 - `channel` (int): Canal de reproducción (default: 10)
 - `volume` (float): Volumen (0.0-1.0, default: 1.0)
 - `loops` (int): Repeticiones (default: 0)

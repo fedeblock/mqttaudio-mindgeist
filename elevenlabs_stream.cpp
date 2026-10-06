@@ -1,4 +1,5 @@
 #include "elevenlabs_stream.h"
+#include "tts_request.h"
 #include <SDL.h>
 #include <SDL_mixer.h>
 #include <curl/curl.h>
@@ -35,6 +36,22 @@ bool play_elevenlabs_stream(const std::string& voice_id,
                              int channel,
                              float volume,
                              int loops) {
+    // Los datos del mensaje MQTT no se concatenan sin comprobar: voice_id va dentro
+    // de la URL y format dentro de una cabecera, y el texto dentro de un JSON.
+    if (!isSafeToken(voice_id, 64)) {
+        fprintf(stderr, "ELEVENLABS: voice_id no válido (solo letras, números, '_' y '-', máximo 64).\n");
+        return false;
+    }
+    if (!isSafeToken(format, 8)) {
+        fprintf(stderr, "ELEVENLABS: format no válido (solo letras, números, '_' y '-', máximo 8).\n");
+        return false;
+    }
+    std::string postdata;
+    if (!buildTtsBody(text, postdata)) {
+        fprintf(stderr, "ELEVENLABS: el texto no es UTF-8 válido y no se puede enviar.\n");
+        return false;
+    }
+
     // Construye URL de streaming
     std::string url = "https://api.elevenlabs.io/v1/text-to-speech/" + voice_id + "/stream";
 
@@ -43,11 +60,6 @@ bool play_elevenlabs_stream(const std::string& voice_id,
     headers = curl_slist_append(headers, ("xi-api-key: " + api_key).c_str());
     headers = curl_slist_append(headers, ("Accept: audio/" + format).c_str());
     headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    // Payload JSON simple
-    std::ostringstream oss;
-    oss << "{\"text\":\"" << text << "\"}";
-    std::string postdata = oss.str();
 
     MemBuffer buf;
     CURL* curl = curl_easy_init();
