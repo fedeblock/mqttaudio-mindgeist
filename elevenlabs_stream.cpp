@@ -60,11 +60,20 @@ bool play_elevenlabs_stream(const std::string& voice_id,
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
     CURLcode res = curl_easy_perform(curl);
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     curl_slist_free_all(headers);
-    if (res != CURLE_OK) buf.error = true;
+    if (res != CURLE_OK) {
+        buf.error = true;
+        // Nunca se registran las cabeceras ni la URL con datos: llevan la clave.
+        fprintf(stderr, "ELEVENLABS: la petición falló (%s, HTTP %ld)%s\n",
+                curl_easy_strerror(res), http_code,
+                http_code == 401 ? ": clave inválida o ausente" : "");
+    }
     curl_easy_cleanup(curl);
 
     if (buf.error || buf.data.empty()) {
+        if (!buf.error) fprintf(stderr, "ELEVENLABS: la respuesta no trae audio.\n");
         return false;
     }
     SDL_RWops* rw = SDL_RWFromMem(buf.data.data(), buf.data.size());

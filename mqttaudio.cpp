@@ -28,6 +28,7 @@
 
 #include "streaming_audio.h"
 #include "elevenlabs_stream.h"
+#include "redact.h" // Oculta claves antes de registrar un mensaje
 
 #include <thread>
 #include <vector>
@@ -185,6 +186,32 @@ void playSample(const char *file, int channel, bool loop, float volume, bool exc
 }
 
 // Function to process incoming MQTT commands
+// Clave de ElevenLabs. Orden de búsqueda:
+//   1. Variable de entorno ELEVENLABS_API_KEY (por ejemplo cargada con
+//      EnvironmentFile= desde ~/.config/blk/secrets.env).
+//   2. Campo 'api_key' del mensaje. OBSOLETO: viaja en claro por MQTT.
+// El entorno gana para poder rotar la clave sin esperar a que se actualicen los
+// flows que todavía la envían en cada mensaje.
+static std::string resolveElevenLabsKey(const Value &msg)
+{
+    const char *env = getenv("ELEVENLABS_API_KEY");
+    if (env != nullptr && env[0] != '\0')
+        return std::string(env);
+
+    if (msg.HasMember("api_key") && msg["api_key"].IsString() && msg["api_key"].GetStringLength() > 0)
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            warned = true;
+            fprintf(stderr, "AVISO: 'api_key' en el mensaje MQTT está obsoleta (viaja en claro). "
+                            "Define ELEVENLABS_API_KEY en el entorno del servicio.\n");
+        }
+        return std::string(msg["api_key"].GetString());
+    }
+    return std::string();
+}
+
 bool processCommand(Document &d)
 {
     if (!d.IsObject())
@@ -506,14 +533,19 @@ bool processCommand(Document &d)
         }
         const auto &msg = d["message"];
         if (!msg.HasMember("voice_id") || !msg["voice_id"].IsString() ||
-            !msg.HasMember("api_key") || !msg["api_key"].IsString() ||
             !msg.HasMember("text") || !msg["text"].IsString())
         {
-            fprintf(stderr, "Mensaje 'elevenlabs_tts' inválido: faltan campos obligatorios.\n");
+            fprintf(stderr, "Mensaje 'elevenlabs_tts' inválido: faltan campos obligatorios (voice_id, text).\n");
             return false;
         }
         std::string voice_id = msg["voice_id"].GetString();
-        std::string api_key = msg["api_key"].GetString();
+        std::string api_key = resolveElevenLabsKey(msg);
+        if (api_key.empty())
+        {
+            fprintf(stderr, "Mensaje 'elevenlabs_tts' rechazado: no hay clave. "
+                            "Define ELEVENLABS_API_KEY en el entorno del servicio.\n");
+            return false;
+        }
         std::string text = msg["text"].GetString();
         std::string format = msg.HasMember("format") && msg["format"].IsString()
                                  ? msg["format"].GetString()
@@ -691,7 +723,9 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 
         if (!processCommand(d))
         {
-            fprintf(stderr, "Failed to process command '%s'.\n", (const char *)message->payload);
+            // Nunca se registra el payload tal cual: puede llevar una clave de API.
+            fprintf(stderr, "Failed to process command '%s'.\n",
+                    redactSecrets((const char *)message->payload, (size_t)message->payloadlen).c_str());
         }
     }
 }

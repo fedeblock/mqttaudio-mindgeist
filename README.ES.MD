@@ -174,7 +174,6 @@ make install-dependencies  # Solo Ubuntu/Debian
   "command": "elevenlabs_tts",
   "message": {
     "voice_id": "21m00Tcm4TlvDq8ikWAM",
-    "api_key": "tu_api_key_elevenlabs",
     "text": "Hola, soy tu asistente de voz",
     "format": "mp3",
     "channel": 10,
@@ -186,12 +185,28 @@ make install-dependencies  # Solo Ubuntu/Debian
 
 **Parámetros**:
 - `voice_id` (string, **required**): ID de voz de ElevenLabs
-- `api_key` (string, **required**): API key de ElevenLabs
+- `api_key` (string, **obsoleto**): clave de ElevenLabs en el mensaje. Viaja en claro por MQTT y por eso **no se recomienda**. Solo se usa si no hay `ELEVENLABS_API_KEY` en el entorno, y entonces se registra un aviso.
 - `text` (string, **required**): Texto a sintetizar
 - `format` (string): Formato de audio ("mp3", "wav", default: "mp3")
 - `channel` (int): Canal de reproducción (default: 10)
 - `volume` (float): Volumen (0.0-1.0, default: 1.0)
 - `loops` (int): Repeticiones (default: 0)
+
+#### Clave de API de ElevenLabs
+
+La clave se lee de la variable de entorno **`ELEVENLABS_API_KEY`** del proceso. Si el entorno no la tiene, se usa el campo `api_key` del mensaje (obsoleto). **El entorno gana siempre**: así se puede rotar la clave sin esperar a que se actualicen los emisores que aún la envían. Si no hay clave en ningún sitio, el mensaje se rechaza y se registra el motivo.
+
+Con systemd, guarda la clave fuera del repositorio y cárgala con `EnvironmentFile=`. En [`systemd/blk.conf`](systemd/blk.conf) hay un *drop-in* listo:
+
+```bash
+# ~/.config/blk/secrets.env  (chmod 600; una línea KEY=valor, sin "export")
+ELEVENLABS_API_KEY=...
+
+sudo install -D -m 644 systemd/blk.conf /etc/systemd/system/mqttaudio.service.d/blk.conf
+sudo systemctl daemon-reload && sudo systemctl restart mqttaudio
+```
+
+El registro nunca incluye la clave: si un mensaje falla, el payload se imprime con `api_key`, `xi-api-key`, `apiKey` y `authorization` sustituidos por `***`. Si ElevenLabs rechaza la petición (por ejemplo HTTP 401), se registra el código.
 
 ### 🎛️ Comandos de Control
 
@@ -302,7 +317,6 @@ make install-dependencies  # Solo Ubuntu/Debian
   "command": "elevenlabs_tts",
   "message": {
     "voice_id": "21m00Tcm4TlvDq8ikWAM",
-    "api_key": "sk-...",
     "text": "La temperatura actual es de 23 grados centígrados",
     "channel": 5,
     "volume": 0.8
@@ -326,7 +340,7 @@ make install-dependencies  # Solo Ubuntu/Debian
 # Script de ejemplo para notificación compleja
 mosquitto_pub -h localhost -t "voice/audio" -m '{"command": "play", "message": {"file": "notification_start.wav", "channel": 0}}'
 sleep 1
-mosquitto_pub -h localhost -t "voice/audio" -m '{"command": "elevenlabs_tts", "message": {"voice_id": "21m00Tcm4TlvDq8ikWAM", "api_key": "sk-...", "text": "Tienes 3 mensajes nuevos", "channel": 1}}'
+mosquitto_pub -h localhost -t "voice/audio" -m '{"command": "elevenlabs_tts", "message": {"voice_id": "21m00Tcm4TlvDq8ikWAM", "text": "Tienes 3 mensajes nuevos", "channel": 1}}'
 sleep 3
 mosquitto_pub -h localhost -t "voice/audio" -m '{"command": "play", "message": {"file": "notification_end.wav", "channel": 0}}'
 ```
@@ -340,6 +354,7 @@ export SDL_AUDIODRIVER=alsa
 export AUDIODEV=/dev/dsp1
 export SDL_RWHTTP_USERAGENT="VoiceAssistant/1.0"
 export SDL_RWHTTP_TIMEOUT=10
+export ELEVENLABS_API_KEY=...   # clave de ElevenLabs (ver "Clave de API de ElevenLabs")
 ```
 
 ### Optimización para Producción
@@ -397,7 +412,6 @@ var msg = {
         command: "elevenlabs_tts",
         message: {
             voice_id: "21m00Tcm4TlvDq8ikWAM",
-            api_key: flow.get("elevenlabs_api_key"),
             text: msg.payload.text,
             channel: 5,
             volume: 0.8

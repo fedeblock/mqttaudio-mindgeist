@@ -301,6 +301,40 @@ The player listens to MQTT messages in JSON format and processes commands accord
 }
 ```
 
+#### ElevenLabs Text-to-Speech
+
+**Command**: `elevenlabs_tts`
+
+**Description**: Synthesizes `text` with ElevenLabs and plays it on a channel.
+
+**Parameters**:
+
+- `voice_id` (string, required): ElevenLabs voice ID.
+- `text` (string, required): Text to synthesize.
+- `format` (string, optional): Audio format (default `mp3`).
+- `channel` (int, optional): Channel (default `10`).
+- `volume` (float, optional): Volume, 0.0 to 1.0 (default `1.0`).
+- `loops` (int, optional): Repetitions (default `0`).
+- `api_key` (string, **deprecated**): Key in the message. It travels in clear text over MQTT. Used only when `ELEVENLABS_API_KEY` is not set, and a warning is logged.
+
+**API key**: set the `ELEVENLABS_API_KEY` environment variable of the process. The environment always wins, so you can rotate a key without waiting for publishers that still send it. With no key anywhere, the message is rejected and the reason is logged. With systemd, keep the key outside the repository and load it with `EnvironmentFile=`; see [`systemd/blk.conf`](systemd/blk.conf).
+
+**Logs**: the key is never logged. When a message fails, the payload is printed with `api_key`, `xi-api-key`, `apiKey` and `authorization` replaced by `***`. When ElevenLabs rejects a request (for example HTTP 401), the status code is logged.
+
+**Example**:
+
+```json
+{
+  "command": "elevenlabs_tts",
+  "message": {
+    "voice_id": "21m00Tcm4TlvDq8ikWAM",
+    "text": "Hello, I am your voice assistant",
+    "channel": 10,
+    "volume": 0.9
+  }
+}
+```
+
 ## How It Works
 
 - The player initializes SDL and SDL_mixer for audio playback.

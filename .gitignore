@@ -32,3 +32,5 @@
 *.app
 
 mqttaudio
+
+test_redact
